@@ -2,6 +2,9 @@
 .claude/
 CLAUDE.md
 
+# Docs (local reference only)
+docs/
+
 # Python
 __pycache__/
 *.py[cod]
