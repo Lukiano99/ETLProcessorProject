@@ -4,3 +4,6 @@ sqlalchemy==2.0.36
 psycopg2-binary==2.9.10
 apache-airflow==2.10.4
 python-dotenv==1.0.1
+matplotlib==3.9.4
+seaborn==0.13.2
+jupyter==1.1.1
