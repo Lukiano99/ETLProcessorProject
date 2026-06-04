@@ -4,16 +4,40 @@ End-to-end ETL pipeline that extracts weather data from the [Open-Meteo API](htt
 
 ## Architecture
 
+```mermaid
+graph LR
+    subgraph External
+        API[Open-Meteo API]
+    end
+
+    subgraph Docker Compose
+        subgraph Airflow
+            Scheduler[Scheduler]
+            Webserver[Webserver\nlocalhost:8080]
+        end
+
+        subgraph PostgreSQL
+            DB[(weather_etl\nlocalhost:5433)]
+        end
+    end
+
+    API -->|HTTP GET| Scheduler
+    Scheduler -->|SQLAlchemy| DB
+    Scheduler --- Webserver
 ```
-Open-Meteo API
-     ↓ requests.get (hourly weather data)
-data/raw/*.json
-     ↓ pandas transform + enrichment
-data/processed/*.csv
-     ↓ SQLAlchemy parameterized insert
-PostgreSQL (raw_weather, weather_hourly, daily_weather_summary)
-     ↑
-Airflow DAG (scheduled daily, with retry and quality checks)
+
+### Data Flow
+
+```mermaid
+graph LR
+    A[Open-Meteo API] -->|requests.get| B[data/raw/*.json]
+    B -->|pandas transform| C[data/processed/*.csv]
+    C -->|SQLAlchemy insert| D[(PostgreSQL)]
+
+    style A fill:#1565c0,color:#fff
+    style B fill:#e65100,color:#fff
+    style C fill:#e65100,color:#fff
+    style D fill:#2e7d32,color:#fff
 ```
 
 ## Data Source
@@ -38,6 +62,22 @@ Belgrade, Zagreb, Budapest, Vienna, Ljubljana, Bucharest, Sofia, Bratislava, Pra
 
 The Airflow DAG (`weather_etl_pipeline`) runs 6 sequential tasks:
 
+```mermaid
+graph LR
+    E[extract_data] --> T[transform_data]
+    T --> C[create_tables]
+    C --> L[load_to_postgres]
+    L --> D[compute_daily_summary]
+    D --> Q[quality_check]
+
+    style E fill:#1565c0,color:#fff
+    style T fill:#1565c0,color:#fff
+    style C fill:#2e7d32,color:#fff
+    style L fill:#2e7d32,color:#fff
+    style D fill:#e65100,color:#fff
+    style Q fill:#b71c1c,color:#fff
+```
+
 | # | Task | Description |
 |---|------|-------------|
 | 1 | `extract_data` | Fetch 7 days of hourly weather data for 10 cities from Open-Meteo API |
@@ -49,20 +89,60 @@ The Airflow DAG (`weather_etl_pipeline`) runs 6 sequential tasks:
 
 ## Database Schema
 
+```mermaid
+erDiagram
+    raw_weather {
+        serial id PK
+        varchar city
+        varchar country
+        float latitude
+        float longitude
+        timestamp time
+        float temperature_2m
+        float relative_humidity_2m
+        float precipitation
+        float wind_speed_10m
+        float pressure_msl
+        float cloud_cover
+    }
+
+    weather_hourly {
+        serial id PK
+        varchar city
+        varchar country
+        timestamp time
+        date date
+        int hour
+        varchar day_of_week
+        boolean is_daytime
+        float temperature_celsius
+        float temperature_fahrenheit
+        varchar wind_category
+        varchar precipitation_category
+    }
+
+    daily_weather_summary {
+        serial id PK
+        varchar city
+        varchar country
+        date date
+        float avg_temperature
+        float min_temperature
+        float max_temperature
+        float total_precipitation
+        float daytime_avg_temp
+        float nighttime_avg_temp
+    }
+
+    raw_weather ||--o{ weather_hourly : "same source data"
+    weather_hourly ||--o{ daily_weather_summary : "aggregated into"
+```
+
 **`raw_weather`** — raw API data with original column names
 
-**`weather_hourly`** — enriched hourly data with derived fields:
-- Date parts: date, hour, day_of_week, month, year
-- `is_daytime` flag (6:00–21:00)
-- `temperature_fahrenheit` conversion
-- `wind_category`: Calm / Light / Moderate / Strong / Storm
-- `precipitation_category`: None / Light / Moderate / Heavy / Extreme
+**`weather_hourly`** — enriched hourly data with derived fields (day/night flag, wind category, Fahrenheit, etc.)
 
-**`daily_weather_summary`** — aggregated daily stats per city:
-- Average, min, max temperature
-- Total precipitation
-- Average and max wind speed
-- Daytime vs nighttime average temperature
+**`daily_weather_summary`** — aggregated daily stats per city (avg/min/max temp, total precipitation, daytime vs nighttime)
 
 ## Project Structure
 
@@ -130,6 +210,23 @@ Database: weather_etl
 User: airflow
 Password: airflow
 ```
+
+## Screenshots
+
+*Screenshots of the running pipeline:*
+
+![Airflow DAGs](assets/Screenshot%20-%20Airflow%20DAGs.png)
+![Airflow Orchestration](assets/Screenshot%20-%20Airflow%20orchestration.png)
+
+## Data Analysis
+
+See the [Weather Analysis Notebook](notebooks/weather_analysis.ipynb) for visualizations including:
+- Average temperature comparison across cities
+- Temperature trends over time
+- Precipitation analysis
+- Daytime vs nighttime temperature comparison
+- Correlation heatmap between weather variables
+- Wind category distribution
 
 ## Key Design Decisions
 
