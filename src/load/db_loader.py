@@ -10,10 +10,12 @@ logger = logging.getLogger(__name__)
 
 
 def get_engine():
+    """Create a SQLAlchemy engine (connection pool) to PostgreSQL."""
     return create_engine(DATABASE_URL)
 
 
 def create_tables(engine):
+    """Execute sql/create_tables.sql to create all tables if they don't exist."""
     sql_path = Path("sql/create_tables.sql")
     sql = sql_path.read_text(encoding="utf-8")
 
@@ -26,13 +28,40 @@ def create_tables(engine):
     logger.info("Database tables created")
 
 
+def _insert_dataframe(engine, df: pd.DataFrame, table_name: str) -> int:
+    """Insert a DataFrame into a table using parameterized SQL.
+
+    Uses ON CONFLICT DO NOTHING so re-runs don't fail on duplicate data.
+    """
+    records = df.to_dict(orient="records")
+    if not records:
+        return 0
+
+    columns = list(records[0].keys())
+    placeholders = ", ".join(f":{col}" for col in columns)
+    col_names = ", ".join(columns)
+    query = text(
+        f"INSERT INTO {table_name} ({col_names}) VALUES ({placeholders}) "
+        f"ON CONFLICT DO NOTHING"
+    )
+
+    # engine.begin() opens a transaction — auto-commits on success, rolls back on error
+    with engine.begin() as conn:
+        result = conn.execute(query, records)
+
+    return result.rowcount
+
+
 def load_raw_weather(engine, df: pd.DataFrame) -> int:
+    """Load data into raw_weather table, mapping enriched column names back to original API names."""
     raw_cols = [
         "city", "country", "latitude", "longitude", "elevation",
         "time", "temperature_celsius", "humidity_percent",
         "precipitation_mm", "wind_speed_kmh", "pressure_hpa", "cloud_cover_percent",
     ]
     raw_df = df[raw_cols].copy()
+
+    # Rename back to original API column names for the raw table
     raw_df = raw_df.rename(columns={
         "temperature_celsius": "temperature_2m",
         "humidity_percent": "relative_humidity_2m",
@@ -42,18 +71,13 @@ def load_raw_weather(engine, df: pd.DataFrame) -> int:
         "cloud_cover_percent": "cloud_cover",
     })
 
-    rows = raw_df.to_sql(
-        "raw_weather",
-        engine,
-        if_exists="append",
-        index=False,
-        method="multi",
-    )
-    logger.info("Loaded %d rows into raw_weather", rows or len(raw_df))
-    return rows or len(raw_df)
+    rows = _insert_dataframe(engine, raw_df, "raw_weather")
+    logger.info("Loaded %d rows into raw_weather", rows)
+    return rows
 
 
 def load_weather_hourly(engine, df: pd.DataFrame) -> int:
+    """Load enriched data into weather_hourly table (includes derived fields like wind_category)."""
     hourly_cols = [
         "city", "country", "latitude", "longitude", "elevation",
         "time", "date", "hour", "day_of_week", "month", "year", "is_daytime",
@@ -63,21 +87,21 @@ def load_weather_hourly(engine, df: pd.DataFrame) -> int:
         "pressure_hpa", "cloud_cover_percent",
     ]
     hourly_df = df[hourly_cols].copy()
+    # Pandas Categorical types need to be converted to strings for SQL insert
     hourly_df["wind_category"] = hourly_df["wind_category"].astype(str)
     hourly_df["precipitation_category"] = hourly_df["precipitation_category"].astype(str)
 
-    rows = hourly_df.to_sql(
-        "weather_hourly",
-        engine,
-        if_exists="append",
-        index=False,
-        method="multi",
-    )
-    logger.info("Loaded %d rows into weather_hourly", rows or len(hourly_df))
-    return rows or len(hourly_df)
+    rows = _insert_dataframe(engine, hourly_df, "weather_hourly")
+    logger.info("Loaded %d rows into weather_hourly", rows)
+    return rows
 
 
 def compute_daily_summary(engine) -> int:
+    """Aggregate hourly data into daily summaries using SQL.
+
+    Uses ON CONFLICT ... DO UPDATE (upsert) so re-runs update existing summaries
+    instead of creating duplicates.
+    """
     query = text("""
         INSERT INTO daily_weather_summary (
             city, country, date,
@@ -126,6 +150,7 @@ def compute_daily_summary(engine) -> int:
 
 
 def load_all(df: pd.DataFrame):
+    """Run the full load pipeline: create tables, insert raw + hourly, compute summaries."""
     engine = get_engine()
     create_tables(engine)
     load_raw_weather(engine, df)
