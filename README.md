@@ -34,10 +34,10 @@ graph LR
     B -->|pandas transform| C[data/processed/*.csv]
     C -->|SQLAlchemy insert| D[(PostgreSQL)]
 
-    style A fill:#e1f5fe
-    style B fill:#fff3e0
-    style C fill:#fff3e0
-    style D fill:#e8f5e9
+    style A fill:#1565c0,color:#fff
+    style B fill:#e65100,color:#fff
+    style C fill:#e65100,color:#fff
+    style D fill:#2e7d32,color:#fff
 ```
 
 ## Data Source
@@ -70,12 +70,12 @@ graph LR
     L --> D[compute_daily_summary]
     D --> Q[quality_check]
 
-    style E fill:#e3f2fd
-    style T fill:#e3f2fd
-    style C fill:#e8f5e9
-    style L fill:#e8f5e9
-    style D fill:#fff3e0
-    style Q fill:#fce4ec
+    style E fill:#1565c0,color:#fff
+    style T fill:#1565c0,color:#fff
+    style C fill:#2e7d32,color:#fff
+    style L fill:#2e7d32,color:#fff
+    style D fill:#e65100,color:#fff
+    style Q fill:#b71c1c,color:#fff
 ```
 
 | # | Task | Description |
