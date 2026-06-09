@@ -4,6 +4,7 @@ from pathlib import Path
 
 from airflow import DAG
 from airflow.operators.python import PythonOperator
+from airflow.providers.docker.operators.docker import DockerOperator
 
 # Airflow runs inside /opt/airflow in the container — add it to path so we can import our src modules
 sys.path.insert(0, "/opt/airflow")
@@ -120,5 +121,25 @@ with DAG(
     daily = PythonOperator(task_id="compute_daily_summary", python_callable=task_daily_summary)
     quality = PythonOperator(task_id="quality_check", python_callable=task_quality_check)
 
+    # Spark analytics — runs PySpark job in a separate container via DockerOperator
+    spark_analytics = DockerOperator(
+        task_id="spark_analytics",
+        image="etlprocessorproject-spark",
+        entrypoint=[""],
+        command='/opt/spark/bin/spark-submit --jars /opt/spark/jars/postgresql-42.7.4.jar /opt/spark/jobs/weather_analytics.py',
+        network_mode="etlprocessorproject_default",
+        environment={
+            "DB_HOST": "postgres",
+            "DB_PORT": "5432",
+            "DB_NAME": "weather_etl",
+            "DB_USER": "airflow",
+            "DB_PASSWORD": "airflow",
+            "JDBC_DRIVER_PATH": "/opt/spark/jars/postgresql-42.7.4.jar",
+        },
+        docker_url="unix://var/run/docker.sock",
+        auto_remove=True,
+        mount_tmp_dir=False,
+    )
+
     # Define execution order: each task waits for the previous one to succeed
-    extract >> transform >> create_db >> load >> daily >> quality
+    extract >> transform >> create_db >> load >> daily >> quality >> spark_analytics

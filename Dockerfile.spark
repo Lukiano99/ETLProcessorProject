@@ -1,0 +1,12 @@
+FROM apache/spark-py:latest
+
+USER root
+
+RUN apt-get update && apt-get install -y curl && \
+    curl -L -o /opt/spark/jars/postgresql-42.7.4.jar \
+    https://jdbc.postgresql.org/download/postgresql-42.7.4.jar && \
+    apt-get clean && rm -rf /var/lib/apt/lists/*
+
+COPY src/spark/ /opt/spark/jobs/
+
+USER root
