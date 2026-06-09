@@ -19,6 +19,7 @@ x-airflow-common: &airflow-common
     - ./sql:/opt/airflow/sql
     - ./data:/opt/airflow/data
     - ./logs:/opt/airflow/logs
+    - /var/run/docker.sock:/var/run/docker.sock
   depends_on:
     postgres:
       condition: service_healthy
@@ -72,6 +73,25 @@ services:
     depends_on:
       airflow-init:
         condition: service_completed_successfully
+
+  spark:
+    build:
+      context: .
+      dockerfile: Dockerfile.spark
+    environment:
+      - DB_HOST=postgres
+      - DB_PORT=5432
+      - DB_NAME=weather_etl
+      - DB_USER=airflow
+      - DB_PASSWORD=airflow
+      - JDBC_DRIVER_PATH=/opt/spark/jars/postgresql-42.7.4.jar
+    volumes:
+      - ./src/spark:/opt/spark/jobs
+    depends_on:
+      postgres:
+        condition: service_healthy
+    profiles:
+      - spark
 
 volumes:
   postgres_data:

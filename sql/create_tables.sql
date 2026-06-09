@@ -63,6 +63,21 @@ CREATE TABLE IF NOT EXISTS daily_weather_summary (
     UNIQUE (city, date)
 );
 
+CREATE TABLE IF NOT EXISTS spark_city_analytics (
+    id SERIAL PRIMARY KEY,
+    city VARCHAR(100) NOT NULL,
+    country VARCHAR(100) NOT NULL,
+    date DATE NOT NULL,
+    avg_temperature FLOAT,
+    rolling_avg_7d FLOAT,
+    temperature_rank INTEGER,
+    city_mean_temp FLOAT,
+    city_stddev_temp FLOAT,
+    is_anomaly BOOLEAN,
+    computed_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+    UNIQUE (city, date)
+);
+
 CREATE TABLE IF NOT EXISTS pipeline_log (
     id SERIAL PRIMARY KEY,
     run_id VARCHAR(100) NOT NULL,

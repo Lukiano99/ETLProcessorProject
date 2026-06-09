@@ -1,6 +1,6 @@
 # Weather ETL Pipeline
 
-End-to-end ETL pipeline that extracts weather data from the [Open-Meteo API](https://open-meteo.com/) for 10 European cities, transforms and enriches it in Python, and loads it into PostgreSQL — orchestrated with Apache Airflow.
+End-to-end ETL pipeline that extracts weather data from the [Open-Meteo API](https://open-meteo.com/) for 10 European cities, transforms and enriches it in Python, loads it into PostgreSQL, and runs advanced analytics with Apache Spark — orchestrated with Apache Airflow.
 
 ## Architecture
 
@@ -19,10 +19,14 @@ graph LR
         subgraph PostgreSQL
             DB[(weather_etl\nlocalhost:5433)]
         end
+
+        Spark[Apache Spark]
     end
 
     API -->|HTTP GET| Scheduler
     Scheduler -->|SQLAlchemy| DB
+    Scheduler -->|DockerOperator| Spark
+    Spark -->|JDBC| DB
     Scheduler --- Webserver
 ```
 
@@ -33,11 +37,14 @@ graph LR
     A[Open-Meteo API] -->|requests.get| B[data/raw/*.json]
     B -->|pandas transform| C[data/processed/*.csv]
     C -->|SQLAlchemy insert| D[(PostgreSQL)]
+    D -->|JDBC read| E[Apache Spark]
+    E -->|JDBC write| D
 
     style A fill:#1565c0,color:#fff
     style B fill:#e65100,color:#fff
     style C fill:#e65100,color:#fff
     style D fill:#2e7d32,color:#fff
+    style E fill:#6a1b9a,color:#fff
 ```
 
 ## Data Source
@@ -56,11 +63,12 @@ Belgrade, Zagreb, Budapest, Vienna, Ljubljana, Bucharest, Sofia, Bratislava, Pra
 | Database | PostgreSQL 15 |
 | Orchestration | Apache Airflow 2.10 |
 | Containerization | Docker / Docker Compose |
+| Data Processing | Apache Spark (PySpark) |
 | Libraries | pandas, SQLAlchemy, requests |
 
 ## Pipeline Tasks
 
-The Airflow DAG (`weather_etl_pipeline`) runs 6 sequential tasks:
+The Airflow DAG (`weather_etl_pipeline`) runs 7 sequential tasks:
 
 ```mermaid
 graph LR
@@ -69,6 +77,7 @@ graph LR
     C --> L[load_to_postgres]
     L --> D[compute_daily_summary]
     D --> Q[quality_check]
+    Q --> S[spark_analytics]
 
     style E fill:#1565c0,color:#fff
     style T fill:#1565c0,color:#fff
@@ -76,6 +85,7 @@ graph LR
     style L fill:#2e7d32,color:#fff
     style D fill:#e65100,color:#fff
     style Q fill:#b71c1c,color:#fff
+    style S fill:#6a1b9a,color:#fff
 ```
 
 | # | Task | Description |
@@ -86,6 +96,7 @@ graph LR
 | 4 | `load_to_postgres` | Insert data into `raw_weather` and `weather_hourly` tables |
 | 5 | `compute_daily_summary` | SQL aggregation into `daily_weather_summary` (avg/min/max temp, total precipitation) |
 | 6 | `quality_check` | Validate that tables are not empty |
+| 7 | `spark_analytics` | PySpark job: rolling averages, city rankings, anomaly detection via JDBC |
 
 ## Database Schema
 
@@ -134,8 +145,22 @@ erDiagram
         float nighttime_avg_temp
     }
 
+    spark_city_analytics {
+        serial id PK
+        varchar city
+        varchar country
+        date date
+        float avg_temperature
+        float rolling_avg_7d
+        int temperature_rank
+        float city_mean_temp
+        float city_stddev_temp
+        boolean is_anomaly
+    }
+
     raw_weather ||--o{ weather_hourly : "same source data"
     weather_hourly ||--o{ daily_weather_summary : "aggregated into"
+    weather_hourly ||--o{ spark_city_analytics : "Spark analytics"
 ```
 
 **`raw_weather`** — raw API data with original column names
@@ -143,6 +168,8 @@ erDiagram
 **`weather_hourly`** — enriched hourly data with derived fields (day/night flag, wind category, Fahrenheit, etc.)
 
 **`daily_weather_summary`** — aggregated daily stats per city (avg/min/max temp, total precipitation, daytime vs nighttime)
+
+**`spark_city_analytics`** — Spark-computed analytics: 7-day rolling average, daily city temperature ranking, anomaly detection
 
 ## Project Structure
 
@@ -155,8 +182,10 @@ erDiagram
 │   │   └── weather_api.py        # Open-Meteo API extraction
 │   ├── transform/
 │   │   └── weather_transform.py  # Data cleaning and enrichment
-│   └── load/
-│       └── db_loader.py          # PostgreSQL loading
+│   ├── load/
+│   │   └── db_loader.py          # PostgreSQL loading
+│   └── spark/
+│       └── weather_analytics.py  # PySpark analytics job
 ├── sql/
 │   ├── create_tables.sql         # DDL for all tables
 │   └── init_db.sql               # Creates weather_etl database
@@ -164,7 +193,8 @@ erDiagram
 │   ├── test_extract.py           # Extract module tests
 │   └── test_transform.py         # Transform module tests
 ├── docker-compose.yml
-├── Dockerfile
+├── Dockerfile                    # Airflow image
+├── Dockerfile.spark              # Spark image with JDBC driver
 ├── requirements.txt
 └── requirements-airflow.txt
 ```
@@ -179,8 +209,9 @@ erDiagram
 ### Run the pipeline
 
 ```bash
-# Start all services (PostgreSQL, Airflow webserver, scheduler)
-docker compose up -d
+# Build and start all services (PostgreSQL, Airflow, Spark)
+docker compose up -d --build
+docker compose --profile spark build spark
 
 # Open Airflow UI
 open http://localhost:8080
@@ -234,3 +265,4 @@ See the [Weather Analysis Notebook](notebooks/weather_analysis.ipynb) for visual
 - **Upsert for summaries**: `ON CONFLICT DO UPDATE` on daily_weather_summary — always reflects the latest computation
 - **Raw + enriched tables**: raw_weather preserves original API data; weather_hourly has the transformed version
 - **No external API key**: Open-Meteo is free and keyless — anyone can clone and run the pipeline immediately
+- **Spark via DockerOperator**: Airflow launches PySpark jobs in isolated containers, reading/writing PostgreSQL via JDBC — mirrors production patterns where Spark runs on separate infrastructure
